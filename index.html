@@ -10,69 +10,67 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; height: 100vh; display: flex; flex-direction: column; background: #0f172a; color: #f8fafc; }
-    header { padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
-    header h1 { font-size: 1.1rem; font-weight: 600; }
-    .btn { background: #3b82f6; color: white; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+    header { padding: 10px 20px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+    .controls { display: flex; gap: 10px; align-items: center; }
+    select { background: #0b1329; color: #f8fafc; border: 1px solid #475569; padding: 6px 12px; border-radius: 4px; outline: none; }
+    .btn { background: #3b82f6; color: white; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; font-weight: 500; }
     .btn:hover { background: #2563eb; }
     .main { display: flex; flex: 1; overflow: hidden; }
     .pane { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #334155; }
     .pane-title { padding: 8px 12px; font-size: 0.75rem; text-transform: uppercase; background: #1e293b; color: #94a3b8; font-weight: 600; }
-    textarea { flex: 1; background: #0b1329; border: none; color: #e2e8f0; font-family: monospace; font-size: 14px; padding: 12px; resize: none; outline: none; }
+    textarea { flex: 1; background: #0b1329; border: none; color: #e2e8f0; font-family: monospace; font-size: 13.5px; padding: 12px; resize: none; outline: none; line-height: 1.5; }
     #preview, #search-results { flex: 1; padding: 16px; overflow-y: auto; background: #ffffff; color: #0f172a; line-height: 1.6; }
     .search-bar { padding: 8px; background: #1e293b; display: flex; gap: 6px; }
     .search-bar input { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: white; }
-    .search-card { border-bottom: 1px solid #e2e8f0; padding: 10px 0; font-size: 0.9rem; }
+    .search-card { border-bottom: 1px solid #e2e8f0; padding: 10px 0; font-size: 0.85rem; cursor: pointer; }
+    .search-card:hover { background: #f1f5f9; }
     .search-card b { color: #2563eb; }
-    @media print {
-      body * { visibility: hidden; }
-      #preview, #preview * { visibility: visible; }
-      #preview { position: absolute; left: 0; top: 0; width: 100%; height: auto; padding: 0; }
-    }
+    .tag { display: inline-block; background: #e2e8f0; color: #475569; font-size: 0.7rem; padding: 2px 6px; border-radius: 3px; margin-top: 4px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>MathText Workspace</h1>
-    <button class="btn" onclick="window.print()">Export to PDF</button>
+    <div class="controls">
+      <h2>MathText Studio</h2>
+      <select id="doc-selector" onchange="loadSelectedDocument()">
+        <option value="">-- Load Ingested Corpus --</option>
+      </select>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="saveActiveDocument()">Save/Index</button>
+      <button class="btn" onclick="exportPrintBundle()">Export to PDF</button>
+    </div>
   </header>
   <div class="main">
     <div class="pane">
       <div class="pane-title">Input Editor</div>
-      <textarea id="editor" placeholder="Write text and math here...">## Gauss-Bonnet Theorem
-
-Let $M$ be a compact two-dimensional Riemannian manifold with boundary $\partial M$. 
-
-The global topological property relates to local curvature as follows:
-$$\int_M K \, dA + \int_{\partial M} k_g \, ds = 2\pi \chi(M)$$
-
-Where $\chi(M)$ represents the Euler characteristic and $K$ denotes Gaussian curvature.</textarea>
+      <textarea id="editor" placeholder="Write or select a document..."></textarea>
     </div>
     <div class="pane">
-      <div class="pane-title">Rendered Output</div>
+      <div class="pane-title">Rendered Document</div>
       <div id="preview"></div>
     </div>
     <div class="pane" style="max-width: 380px;">
-      <div class="pane-title">AST / Symbol Searcher</div>
+      <div class="pane-title">Symbol Inverted Index</div>
       <div class="search-bar">
-        <input type="text" id="search-input" placeholder="Search symbol e.g. \int, \chi">
+        <input type="text" id="search-input" placeholder="Query: e.g. \nabla, \rho, \int, \partial">
         <button class="btn" onclick="runSearch()">Find</button>
       </div>
       <div id="search-results">
-        <div style="color: #64748b; font-size: 0.85rem;">Token matches and parsed references will appear here.</div>
+        <div style="color: #64748b; font-size: 0.85rem;">Indexed tokens and document cross-matches will show here.</div>
       </div>
     </div>
   </div>
 
-    <script>
+  <script>
     const editor = document.getElementById('editor');
     const preview = document.getElementById('preview');
+    const docSelector = document.getElementById('doc-selector');
     const searchInput = document.getElementById('search-input');
     const resultsPane = document.getElementById('search-results');
 
-    // Debounce timer for backend indexing
-    let syncTimeout = null;
+    let currentDocId = 'custom_scratchpad';
 
-    // 1. Client-Side Render (Instant Feedback)
     function renderLocal() {
       let raw = editor.value
         .replace(/^## (.*$)/gim, '<h2>$1</h2>')
@@ -88,61 +86,75 @@ Where $\chi(M)$ represents the Euler characteristic and $K$ denotes Gaussian cur
       });
     }
 
-    // 2. Server-Side Index Synchronization
-    function syncBackend() {
-      clearTimeout(syncTimeout);
-      syncTimeout = setTimeout(async () => {
-        try {
-          await fetch('/api/index', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              doc_id: 'active_scratchpad',
-              content: editor.value
-            })
-          });
-        } catch (err) {
-          console.warn('Backend offline or indexing failed:', err);
-        }
-      }, 500);
+    async function fetchDocumentList() {
+      const res = await fetch('/api/documents');
+      const data = await res.json();
+      docSelector.innerHTML = '<option value="">-- Load Ingested Corpus --</option>';
+      data.documents.forEach(doc => {
+        const opt = document.createElement('option');
+        opt.value = doc.id;
+        opt.textContent = `[${doc.category}] ${doc.title}`;
+        docSelector.appendChild(opt);
+      });
     }
 
-    // 3. Server-Side AST Search
+    async function loadSelectedDocument() {
+      const id = docSelector.value;
+      if (!id) return;
+      const res = await fetch(`/api/load?id=${encodeURIComponent(id)}`);
+      const data = await res.json();
+      currentDocId = data.id;
+      editor.value = data.content;
+      renderLocal();
+    }
+
+    async function saveActiveDocument() {
+      await fetch('/api/index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          doc_id: currentDocId,
+          content: editor.value
+        })
+      });
+      alert('Document saved and inverted index updated.');
+    }
+
     async function runSearch() {
       const q = searchInput.value.trim();
       resultsPane.innerHTML = '';
       if (!q) return;
 
-      try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-        const data = await res.json();
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
 
-        if (!data.results || data.results.length === 0) {
-          resultsPane.innerHTML = '<div style="color: #64748b;">No matches found in backend index.</div>';
-          return;
-        }
-
-        data.results.forEach(item => {
-          const card = document.createElement('div');
-          card.className = 'search-card';
-          card.innerHTML = `
-            <b>Doc: ${item.doc_id}</b>
-            <p style="margin-top: 4px; font-size: 0.8rem; color: #334155;">${item.preview}</p>
-          `;
-          resultsPane.appendChild(card);
-        });
-      } catch (err) {
-        resultsPane.innerHTML = `<div style="color: #ef4444;">Search failed: ${err.message}</div>`;
+      if (!data.results || data.results.length === 0) {
+        resultsPane.innerHTML = '<div style="color: #64748b; font-size: 0.85rem;">No documents matching this symbol or term.</div>';
+        return;
       }
+
+      data.results.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'search-card';
+        card.onclick = () => {
+          docSelector.value = item.doc_id;
+          loadSelectedDocument();
+        };
+        card.innerHTML = `
+          <b>${item.doc_id}</b>
+          <p style="margin-top: 4px; font-size: 0.8rem; color: #334155;">${item.preview}</p>
+          <span class="tag">Click to open</span>
+        `;
+        resultsPane.appendChild(card);
+      });
     }
 
-    // 4. Server-Side Export Bundle (Opens standalone print-ready view)
     async function exportPrintBundle() {
       const res = await fetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          doc_id: 'MathText_Document',
+          doc_id: currentDocId,
           content: editor.value
         })
       });
@@ -155,25 +167,16 @@ Where $\chi(M)$ represents the Euler characteristic and $K$ denotes Gaussian cur
       printWindow.onload = () => printWindow.print();
     }
 
-    // Bind event handlers
-    editor.addEventListener('input', () => {
-      renderLocal();
-      syncBackend();
-    });
-
+    editor.addEventListener('input', renderLocal);
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') runSearch();
     });
 
-    // Replace header button click handler
-    document.querySelector('header button').onclick = exportPrintBundle;
-
-    // Initial load
-    window.addEventListener('DOMContentLoaded', () => {
-      renderLocal();
-      syncBackend();
+    window.addEventListener('DOMContentLoaded', async () => {
+      await fetchDocumentList();
+      docSelector.value = 'doc_diffgeom';
+      loadSelectedDocument();
     });
   </script>
 </body>
 </html>
-
