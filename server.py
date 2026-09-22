@@ -1,7 +1,6 @@
 """
-FORM ID: MATHTEXT_SERVER_V1
-PURPOSE: Lightweight REST controller and static asset server for MathText suite.
-DEPENDENCIES: Python standard library (http.server, json, urllib, pathlib)
+FORM ID: MATHTEXT_SERVER_V2
+PURPOSE: Lightweight REST controller, auto-populating indexer, and document registry.
 """
 
 import json
@@ -12,33 +11,32 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-# Import the core engine
-try:
-    from mathtext_core import MathPDFBuilder, MathSearchIndex, MathTextParser
-except ImportError:
-    print(
-        "ERROR: Ensure 'mathtext_core.py' is located in the same directory.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+from corpus_seed import CORPUS
+from mathtext_core import MathPDFBuilder, MathSearchIndex, MathTextParser
 
 HOST = "127.0.0.1"
 PORT = 8080
 STATIC_DIR = Path(__file__).resolve().parent
 
-# Global in-memory indexer instance
 INDEXER = MathSearchIndex()
 
 
+def preload_corpus():
+    """Ingests pre-packaged mathematical corpora into the inverted search index."""
+    for doc_id, meta in CORPUS.items():
+        INDEXER.add_document(doc_id, meta["content"])
+    print(
+        f"[*] Corpus loaded: {len(CORPUS)} documents indexed."
+    )
+    print(
+        f"[*] Symbol index populated with {len(INDEXER.symbol_index)} unique LaTeX command keys."
+    )
+
+
 class MathTextRequestHandler(SimpleHTTPRequestHandler):
-    """Custom request handler exposing REST endpoints and serving the workspace."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
-
-    # -------------------------------------------------------------
-    # Helper Utilities
-    # -------------------------------------------------------------
 
     def _send_json(
         self, data: dict, status: HTTPStatus = HTTPStatus.OK
@@ -55,27 +53,52 @@ class MathTextRequestHandler(SimpleHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length == 0:
             return {}
-        raw_data = self.rfile.read(content_length)
-        return json.loads(raw_data.decode("utf-8"))
-
-    # -------------------------------------------------------------
-    # GET Handlers: Static Files & Search API
-    # -------------------------------------------------------------
+        return json.loads(self.rfile.read(content_length).decode("utf-8"))
 
     def do_GET(self) -> None:
         parsed_url = urlparse(self.path)
         path = parsed_url.path
 
-        # Root redirect to index.html
         if path == "/":
             self.path = "/index.html"
             return super().do_GET()
 
-        # API: Search inverted index
+        # Document Registry
+        if path == "/api/documents":
+            doc_list = [
+                {
+                    "id": k,
+                    "title": v["title"],
+                    "category": v["category"],
+                }
+                for k, v in CORPUS.items()
+            ]
+            self._send_json({"documents": doc_list})
+            return
+
+        # Fetch document content
+        if path == "/api/load":
+            query_params = parse_qs(parsed_url.query)
+            doc_id = query_params.get("id", [""])[0]
+            if doc_id in CORPUS:
+                self._send_json(
+                    {
+                        "id": doc_id,
+                        "title": CORPUS[doc_id]["title"],
+                        "content": CORPUS[doc_id]["content"],
+                    }
+                )
+            else:
+                self._send_json(
+                    {"error": "Document not found"},
+                    HTTPStatus.NOT_FOUND,
+                )
+            return
+
+        # Inverted index search
         if path == "/api/search":
             query_params = parse_qs(parsed_url.query)
             q = query_params.get("q", [""])[0].strip()
-
             if not q:
                 self._send_json(
                     {"query": "", "count": 0, "results": []}
@@ -88,12 +111,7 @@ class MathTextRequestHandler(SimpleHTTPRequestHandler):
             )
             return
 
-        # Fallback to serving static assets (HTML, CSS, JS)
         super().do_GET()
-
-    # -------------------------------------------------------------
-    # POST Handlers: Parsing, Document Indexing, and PDF Export
-    # -------------------------------------------------------------
 
     def do_POST(self) -> None:
         parsed_url = urlparse(self.path)
@@ -108,7 +126,6 @@ class MathTextRequestHandler(SimpleHTTPRequestHandler):
             )
             return
 
-        # API: Parse document into AST tokens
         if path == "/api/parse":
             content = body.get("content", "")
             tokens = MathTextParser.parse_document(content)
@@ -120,22 +137,29 @@ class MathTextRequestHandler(SimpleHTTPRequestHandler):
             )
             return
 
-        # API: Index document into inverted search engine
         if path == "/api/index":
-            doc_id = body.get("doc_id", "untitled_doc")
+            doc_id = body.get("doc_id", "untitled")
             content = body.get("content", "")
+            title = body.get("title", doc_id)
+            category = body.get("category", "Custom")
+
+            # Update corpus cache and indexer
+            CORPUS[doc_id] = {
+                "title": title,
+                "category": category,
+                "content": content,
+            }
             INDEXER.add_document(doc_id, content)
+
             self._send_json(
                 {
                     "status": "indexed",
                     "doc_id": doc_id,
                     "indexed_symbols": len(INDEXER.symbol_index),
-                    "indexed_terms": len(INDEXER.term_index),
                 }
             )
             return
 
-        # API: Generate export-ready KaTeX HTML/print bundle
         if path == "/api/export":
             doc_id = body.get("doc_id", "MathText_Export")
             content = body.get("content", "")
@@ -143,7 +167,6 @@ class MathTextRequestHandler(SimpleHTTPRequestHandler):
             html_bundle = MathPDFBuilder.generate_html_print_bundle(
                 doc_id, tokens
             )
-
             payload = html_bundle.encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -157,12 +180,11 @@ class MathTextRequestHandler(SimpleHTTPRequestHandler):
         )
 
 
-def run_server():
+def run():
+    preload_corpus()
     server_address = (HOST, PORT)
     httpd = HTTPServer(server_address, MathTextRequestHandler)
-    print(f"[*] MathText Studio initialized.")
-    print(f"[*] Serving on http://{HOST}:{PORT}")
-    print(f"[*] Endpoints active: /api/parse, /api/index, /api/search, /api/export")
+    print(f"[*] Serving MathText Studio at http://{HOST}:{PORT}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -171,5 +193,5 @@ def run_server():
 
 
 if __name__ == "__main__":
-    run_server()
-
+    run()
+    
