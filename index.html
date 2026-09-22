@@ -63,12 +63,17 @@ Where $\chi(M)$ represents the Euler characteristic and $K$ denotes Gaussian cur
     </div>
   </div>
 
-  <script>
+    <script>
     const editor = document.getElementById('editor');
     const preview = document.getElementById('preview');
+    const searchInput = document.getElementById('search-input');
+    const resultsPane = document.getElementById('search-results');
 
-    function renderMath() {
-      // Basic markdown headers to HTML preview
+    // Debounce timer for backend indexing
+    let syncTimeout = null;
+
+    // 1. Client-Side Render (Instant Feedback)
+    function renderLocal() {
       let raw = editor.value
         .replace(/^## (.*$)/gim, '<h2>$1</h2>')
         .replace(/^# (.*$)/gim, '<h1>$1</h1>');
@@ -83,34 +88,91 @@ Where $\chi(M)$ represents the Euler characteristic and $K$ denotes Gaussian cur
       });
     }
 
-    function runSearch() {
-      const q = document.getElementById('search-input').value.trim();
-      const resultsPane = document.getElementById('search-results');
-      resultsPane.innerHTML = '';
+    // 2. Server-Side Index Synchronization
+    function syncBackend() {
+      clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(async () => {
+        try {
+          await fetch('/api/index', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              doc_id: 'active_scratchpad',
+              content: editor.value
+            })
+          });
+        } catch (err) {
+          console.warn('Backend offline or indexing failed:', err);
+        }
+      }, 500);
+    }
 
+    // 3. Server-Side AST Search
+    async function runSearch() {
+      const q = searchInput.value.trim();
+      resultsPane.innerHTML = '';
       if (!q) return;
 
-      const regex = new RegExp(`(\\${q})`, 'gi');
-      const lines = editor.value.split('\n');
-      let hits = 0;
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
 
-      lines.forEach((line, idx) => {
-        if (regex.test(line)) {
-          hits++;
+        if (!data.results || data.results.length === 0) {
+          resultsPane.innerHTML = '<div style="color: #64748b;">No matches found in backend index.</div>';
+          return;
+        }
+
+        data.results.forEach(item => {
           const card = document.createElement('div');
           card.className = 'search-card';
-          card.innerHTML = `<b>Line ${idx + 1}:</b> <span>${line.replace(regex, '<mark>$1</mark>')}</span>`;
+          card.innerHTML = `
+            <b>Doc: ${item.doc_id}</b>
+            <p style="margin-top: 4px; font-size: 0.8rem; color: #334155;">${item.preview}</p>
+          `;
           resultsPane.appendChild(card);
-        }
-      });
-
-      if (hits === 0) {
-        resultsPane.innerHTML = '<div style="color: #64748b;">No matches found.</div>';
+        });
+      } catch (err) {
+        resultsPane.innerHTML = `<div style="color: #ef4444;">Search failed: ${err.message}</div>`;
       }
     }
 
-    editor.addEventListener('input', renderMath);
-    window.addEventListener('DOMContentLoaded', renderMath);
+    // 4. Server-Side Export Bundle (Opens standalone print-ready view)
+    async function exportPrintBundle() {
+      const res = await fetch('/api/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          doc_id: 'MathText_Document',
+          content: editor.value
+        })
+      });
+
+      const htmlContent = await res.text();
+      const printWindow = window.open('', '_blank');
+      printWindow.document.open();
+      printWindow.document.write(htmlContent);
+      printWindow.document.close();
+      printWindow.onload = () => printWindow.print();
+    }
+
+    // Bind event handlers
+    editor.addEventListener('input', () => {
+      renderLocal();
+      syncBackend();
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') runSearch();
+    });
+
+    // Replace header button click handler
+    document.querySelector('header button').onclick = exportPrintBundle;
+
+    // Initial load
+    window.addEventListener('DOMContentLoaded', () => {
+      renderLocal();
+      syncBackend();
+    });
   </script>
 </body>
 </html>
