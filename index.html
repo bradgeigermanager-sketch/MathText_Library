@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MathText Studio & Searcher</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; height: 100vh; display: flex; flex-direction: column; background: #0f172a; color: #f8fafc; }
+    header { padding: 12px 20px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+    .btn { background: #3b82f6; color: white; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+    .btn:hover { background: #2563eb; }
+    .main { display: flex; flex: 1; overflow: hidden; }
+    .pane { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #334155; }
+    .pane-title { padding: 8px 12px; font-size: 0.75rem; text-transform: uppercase; background: #1e293b; color: #94a3b8; font-weight: 600; }
+    textarea { flex: 1; background: #0b1329; border: none; color: #e2e8f0; font-family: monospace; font-size: 14px; padding: 12px; resize: none; outline: none; }
+    #preview, #search-results { flex: 1; padding: 16px; overflow-y: auto; background: #ffffff; color: #0f172a; line-height: 1.6; }
+    .search-bar { padding: 8px; background: #1e293b; display: flex; gap: 6px; }
+    .search-bar input { flex: 1; padding: 6px 8px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: white; }
+    .search-card { border-bottom: 1px solid #e2e8f0; padding: 10px 0; font-size: 0.9rem; }
+    .search-card b { color: #2563eb; }
+    @media print {
+      body * { visibility: hidden; }
+      #preview, #preview * { visibility: visible; }
+      #preview { position: absolute; left: 0; top: 0; width: 100%; height: auto; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MathText Workspace</h1>
+    <button class="btn" onclick="window.print()">Export to PDF</button>
+  </header>
+  <div class="main">
+    <div class="pane">
+      <div class="pane-title">Input Editor</div>
+      <textarea id="editor" placeholder="Write text and math here...">## Gauss-Bonnet Theorem
+
+Let $M$ be a compact two-dimensional Riemannian manifold with boundary $\partial M$. 
+
+The global topological property relates to local curvature as follows:
+$$\int_M K \, dA + \int_{\partial M} k_g \, ds = 2\pi \chi(M)$$
+
+Where $\chi(M)$ represents the Euler characteristic and $K$ denotes Gaussian curvature.</textarea>
+    </div>
+    <div class="pane">
+      <div class="pane-title">Rendered Output</div>
+      <div id="preview"></div>
+    </div>
+    <div class="pane" style="max-width: 380px;">
+      <div class="pane-title">AST / Symbol Searcher</div>
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Search symbol e.g. \int, \chi">
+        <button class="btn" onclick="runSearch()">Find</button>
+      </div>
+      <div id="search-results">
+        <div style="color: #64748b; font-size: 0.85rem;">Token matches and parsed references will appear here.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const editor = document.getElementById('editor');
+    const preview = document.getElementById('preview');
+
+    function renderMath() {
+      // Basic markdown headers to HTML preview
+      let raw = editor.value
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        .replace(/^# (.*$)/gim, '<h1>$1</h1>');
+      
+      preview.innerHTML = raw.replace(/\n/g, '<br>');
+      renderMathInElement(preview, {
+        delimiters: [
+          {left: '$$', right: '$$', display: true},
+          {left: '$', right: '$', display: false}
+        ],
+        throwOnError: false
+      });
+    }
+
+    function runSearch() {
+      const q = document.getElementById('search-input').value.trim();
+      const resultsPane = document.getElementById('search-results');
+      resultsPane.innerHTML = '';
+
+      if (!q) return;
+
+      const regex = new RegExp(`(\\${q})`, 'gi');
+      const lines = editor.value.split('\n');
+      let hits = 0;
+
+      lines.forEach((line, idx) => {
+        if (regex.test(line)) {
+          hits++;
+          const card = document.createElement('div');
+          card.className = 'search-card';
+          card.innerHTML = `<b>Line ${idx + 1}:</b> <span>${line.replace(regex, '<mark>$1</mark>')}</span>`;
+          resultsPane.appendChild(card);
+        }
+      });
+
+      if (hits === 0) {
+        resultsPane.innerHTML = '<div style="color: #64748b;">No matches found.</div>';
+      }
+    }
+
+    editor.addEventListener('input', renderMath);
+    window.addEventListener('DOMContentLoaded', renderMath);
+  </script>
+</body>
+</html>
+
